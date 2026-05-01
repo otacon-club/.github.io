@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>オナラ仙人と雲の秘宝</title>
+  <style>
+    :root{--gold:#f7c64b}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(#07112a,#16355e);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;color:white;overflow:hidden;touch-action:none}
+    .wrap{position:relative;width:min(100vw,520px);aspect-ratio:9/16;max-height:100vh;border:4px solid var(--gold);border-radius:14px;box-shadow:0 0 0 4px #2b1406,0 14px 45px rgba(0,0,0,.45);overflow:hidden;background:#000}
+    canvas{width:100%;height:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges;background:#6ec7ff}
+    .buttons{position:absolute;inset:auto 0 14px 0;display:flex;justify-content:space-between;align-items:end;padding:0 16px;pointer-events:none}
+    .cluster{display:flex;gap:10px;pointer-events:auto}
+    button{width:58px;height:58px;border:3px solid #fff3b4;border-radius:14px;color:#fff;background:rgba(15,25,65,.72);box-shadow:inset 0 -5px 0 rgba(0,0,0,.25),0 5px 0 rgba(0,0,0,.22);font-weight:900;font-size:20px;touch-action:none;user-select:none}
+    button:active{transform:translateY(3px);box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)}
+    .hint{position:absolute;left:0;right:0;bottom:86px;text-align:center;font-size:12px;line-height:1.6;text-shadow:0 2px #1b1b3a;pointer-events:none;opacity:.92}
+    @media (hover:hover) and (pointer:fine){.buttons{opacity:.35}.hint{bottom:14px}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <canvas id="game" width="360" height="640" aria-label="オナラ仙人と雲の秘宝"></canvas>
+  <div class="hint">PC: ← → 移動 / Space ジャンプ / Shift 風ダッシュ<br>目的: 金の壺を集めて雲の秘宝門へ！</div>
+  <div class="buttons" aria-hidden="true">
+    <div class="cluster"><button data-key="ArrowLeft">◀</button><button data-key="ArrowRight">▶</button></div>
+    <div class="cluster"><button data-key="Space">跳</button><button data-key="ShiftLeft">風</button></div>
+  </div>
+</main>
+<script>
+(()=>{"use strict";
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");ctx.imageSmoothingEnabled=false;
+const W=360,H=640,WORLD_W=1650,HUD_H=92,GRAVITY=.34;
+const keys=new Set(),pressed=new Set();
+const state={mode:"title",time:0,score:0,best:Number(localStorage.getItem("onaraSenninBest")||0),pots:0,lives:7,won:false,cameraX:0,messageTimer:0};
+const player={x:70,y:430,w:30,h:42,vx:0,vy:0,dir:1,onGround:false,wind:100,dashCooldown:0,anim:0};
+const platforms=[{x:0,y:535,w:210,h:44},{x:235,y:474,w:150,h:42},{x:430,y:408,w:145,h:40},{x:630,y:496,w:150,h:42},{x:835,y:436,w:170,h:42},{x:1040,y:365,w:145,h:40},{x:1235,y:468,w:270,h:48},{x:1490,y:530,w:140,h:44}];
+const pots=[{x:270,y:430,got:false},{x:470,y:360,got:false},{x:680,y:450,got:false},{x:905,y:392,got:false},{x:1090,y:317,got:false},{x:1320,y:420,got:false}];
+const spirits=[{x:170,y:200,phase:0,text:"♪"},{x:560,y:255,phase:1.3,text:"☁"},{x:950,y:210,phase:2.1,text:"祝"},{x:1430,y:390,phase:3.2,text:"♥"}];
+const goal={x:1450,y:320,w:92,h:170};
+function resetGame(){state.mode="play";state.time=0;state.score=0;state.pots=0;state.won=false;state.cameraX=0;state.messageTimer=0;player.x=70;player.y=430;player.vx=0;player.vy=0;player.wind=100;player.dir=1;pots.forEach(p=>p.got=false)}
+function justPressed(c){return pressed.has(c)}
+window.addEventListener("keydown",e=>{if(["ArrowLeft","ArrowRight","Space","ShiftLeft","ShiftRight","Enter"].includes(e.code))e.preventDefault();if(!keys.has(e.code))pressed.add(e.code);keys.add(e.code);if(state.mode==="title"&&(e.code==="Enter"||e.code==="Space"))resetGame();if(state.mode==="win"&&(e.code==="Enter"||e.code==="Space"))resetGame()});
+window.addEventListener("keyup",e=>keys.delete(e.code));
+document.querySelectorAll("button[data-key]").forEach(b=>{const c=b.dataset.key;const down=e=>{e.preventDefault();if(!keys.has(c))pressed.add(c);keys.add(c);if(state.mode==="title"||state.mode==="win")resetGame()};const up=e=>{e.preventDefault();keys.delete(c)};b.addEventListener("pointerdown",down);b.addEventListener("pointerup",up);b.addEventListener("pointercancel",up);b.addEventListener("pointerleave",up)});
+canvas.addEventListener("pointerdown",()=>{if(state.mode==="title"||state.mode==="win")resetGame()});
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function update(){state.time++;player.anim+=.13;if(state.mode!=="play"){pressed.clear();return}
+const left=keys.has("ArrowLeft"),right=keys.has("ArrowRight"),jump=justPressed("Space"),dash=keys.has("ShiftLeft")||keys.has("ShiftRight");
+if(left){player.vx-=.42;player.dir=-1}if(right){player.vx+=.42;player.dir=1}if(!left&&!right)player.vx*=.83;player.vx=Math.max(-3.4,Math.min(3.4,player.vx));
+if(jump&&player.onGround){player.vy=-8.6;player.onGround=false;puff(player.x+12,player.y+42,8)}
+if(dash&&player.wind>0){player.vx+=player.dir*.65;player.vy-=.05;player.wind-=1.5;state.score+=2;if(state.time%3===0)puff(player.x-player.dir*16,player.y+32,1)}else player.wind=Math.min(100,player.wind+.16);
+player.vy+=GRAVITY;player.vy=Math.min(player.vy,9.5);
+const oldY=player.y;player.x+=player.vx;player.y+=player.vy;player.onGround=false;player.x=Math.max(0,Math.min(WORLD_W-player.w,player.x));
+for(const p of platforms){const r={x:player.x,y:player.y,w:player.w,h:player.h};if(rectsOverlap(r,p)&&oldY+player.h<=p.y+7&&player.vy>=0){player.y=p.y-player.h;player.vy=0;player.onGround=true}}
+if(player.y>H+120){player.x=Math.max(30,state.cameraX+30);player.y=120;player.vx=0;player.vy=0;player.wind=Math.max(40,player.wind);state.lives=Math.max(1,state.lives-1);state.messageTimer=80}
+for(const p of pots){if(!p.got&&rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h},{x:p.x,y:p.y,w:24,h:24})){p.got=true;state.pots++;state.score+=500;player.wind=Math.min(100,player.wind+22);puff(p.x+12,p.y+12,12)}}
+if(rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h},goal))win();
+const target=Math.max(0,Math.min(WORLD_W-W,player.x-110));state.cameraX+=(target-state.cameraX)*.09;pressed.clear()}
+const particles=[];function puff(x,y,n){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*2.3,vy:-Math.random()*2.2-.2,life:28+Math.random()*26,max:54,c:Math.random()>.5?"#fff6c9":"#95f27c"})}
+function updateParticles(){for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.03;p.life--;if(p.life<=0)particles.splice(i,1)}}
+function win(){state.mode="win";state.won=true;state.score+=Math.floor(player.wind)*25+state.pots*300+4500;state.best=Math.max(state.best,state.score);localStorage.setItem("onaraSenninBest",String(state.best));puff(player.x+15,player.y+20,60)}
+function pxRect(x,y,w,h,c){if(c==="transparent")return;ctx.fillStyle=c;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
+function pxText(t,x,y,s=12,c="#fff",a="left"){ctx.save();ctx.font=`900 ${s}px "Courier New", monospace`;ctx.textAlign=a;ctx.textBaseline="top";ctx.lineWidth=4;ctx.strokeStyle="#321505";ctx.strokeText(t,Math.round(x),Math.round(y));ctx.fillStyle=c;ctx.fillText(t,Math.round(x),Math.round(y));ctx.restore()}
+function drawCloud(cx,cy,scale=1,tint="#eaffd9",outline="#5ea46b"){ctx.save();ctx.translate(Math.round(cx),Math.round(cy));ctx.scale(scale,scale);ctx.fillStyle=outline;ctx.beginPath();ctx.ellipse(-28,8,22,15,0,0,Math.PI*2);ctx.ellipse(-8,-4,25,20,0,0,Math.PI*2);ctx.ellipse(20,2,27,17,0,0,Math.PI*2);ctx.ellipse(38,10,18,13,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=tint;ctx.beginPath();ctx.ellipse(-30,6,20,13,0,0,Math.PI*2);ctx.ellipse(-9,-6,23,18,0,0,Math.PI*2);ctx.ellipse(18,0,25,15,0,0,Math.PI*2);ctx.ellipse(36,7,16,11,0,0,Math.PI*2);ctx.fill();pxRect(-36,5,72,16,tint);ctx.restore()}
+function drawFlower(x,y,s=4){ctx.fillStyle="#ff7dbd";for(let i=0;i<5;i++){const a=i*Math.PI*2/5;ctx.fillRect(Math.round(x+Math.cos(a)*s),Math.round(y+Math.sin(a)*s),s,s)}ctx.fillStyle="#fff26b";ctx.fillRect(Math.round(x),Math.round(y),s,s)}
+function drawPlatform(p){const x=p.x-state.cameraX;drawCloud(x+p.w*.28,p.y+20,.92,"#f6fff3","#69b57d");drawCloud(x+p.w*.62,p.y+18,.88,"#d9ffd3","#69b57d");pxRect(x+10,p.y+25,p.w-20,12,"#74ca68");pxRect(x+18,p.y+37,p.w-36,6,"#3c8d56");for(let i=22;i<p.w-20;i+=34)drawFlower(x+i,p.y+22,4)}
+function drawPot(x,y,t){ctx.save();ctx.translate(Math.round(x-state.cameraX),Math.round(y+Math.sin(t/20)*3));pxRect(8,0,10,4,"#ffe783");pxRect(4,4,18,5,"#bc7b1b");pxRect(2,9,22,14,"#f7c64b");pxRect(5,12,16,8,"#ffdb65");pxRect(0,12,4,6,"#bc7b1b");pxRect(22,12,4,6,"#bc7b1b");pxRect(7,22,12,3,"#8a5210");pxText("G",8,10,8,"#6b3d09");ctx.restore()}
+function drawGoal(){const x=goal.x-state.cameraX;ctx.save();ctx.translate(Math.round(x),goal.y);pxRect(-12,-28,116,28,"#cf3b25");pxText("GOAL!",10,-24,19,"#fff6ad");pxRect(-4,0,100,160,"#b87a1a");pxRect(5,8,82,144,"#f4c54a");pxRect(15,23,62,129,"#fff0a0");ctx.globalAlpha=.55+Math.sin(state.time/10)*.15;pxRect(22,32,48,112,"#fff");ctx.globalAlpha=1;pxRect(-16,0,14,160,"#814611");pxRect(98,0,14,160,"#814611");pxRect(-25,-12,134,15,"#ffd663");for(let i=0;i<6;i++)drawFlower(i*18+2,-10,3);pxText("秘宝門",15,136,14,"#6c2c09");ctx.restore()}
+function drawHero(){const x=player.x-state.cameraX,y=player.y;ctx.save();ctx.translate(Math.round(x+player.w/2),Math.round(y+player.h/2));ctx.scale(player.dir,1);if(Math.abs(player.vx)>2.2||keys.has("ShiftLeft")||keys.has("ShiftRight"))for(let i=0;i<5;i++)pxRect(-46-i*10,14+Math.sin((state.time+i)/5)*5,20,4,i%2?"#b6ff8a":"#fff7a8");drawCloud(0,24,.42,"#bdffa2","#65b661");pxRect(-10,-2,22,24,"#efffe8");pxRect(-13,8,28,12,"#d8f4ff");pxRect(-16,14,14,7,"#efffe8");pxRect(5,13,18,7,"#efffe8");pxRect(-5,19,9,10,"#6b5130");pxRect(6,19,9,10,"#6b5130");pxRect(-11,9,25,4,"#f6c64d");pxRect(-10,-24,22,20,"#ffd7a6");pxRect(-13,-14,28,12,"#ffffff");pxRect(-10,-8,22,13,"#ffffff");pxRect(-6,-17,4,4,"#1d2946");pxRect(5,-17,4,4,"#1d2946");ctx.strokeStyle="#1d2946";ctx.lineWidth=2;ctx.strokeRect(-10,-20,8,8);ctx.strokeRect(3,-20,8,8);pxRect(-1,-16,4,2,"#1d2946");pxRect(-4,-9,10,3,"#b33a2b");pxRect(-19,-30,38,5,"#e2ba52");pxRect(-13,-36,27,8,"#f1d46d");pxRect(-4,-41,10,6,"#e2ba52");pxRect(-5,-2,5,23,"#ffffff");pxRect(0,2,6,17,"#e0f1ff");ctx.save();ctx.translate(-21,-2);pxRect(-4,-9,12,4,"#ffe783");pxRect(-7,-4,18,16,"#f7c64b");pxRect(-5,0,14,9,"#ffdb65");pxRect(-4,12,12,3,"#8a5210");ctx.restore();pxRect(13,-9,18,5,"#ffd7a6");pxRect(29,-12,5,8,"#ffd7a6");ctx.restore()}
+function drawSpirit(s){const x=s.x-state.cameraX,y=s.y+Math.sin(state.time/22+s.phase)*8;drawCloud(x,y,.34,"#ffffff","#7bb7e8");pxRect(x-5,y-2,3,3,"#27345f");pxRect(x+6,y-2,3,3,"#27345f");pxRect(x-3,y+7,12,2,"#ff75a3");pxText(s.text,x+24,y-28,13,"#fff6ad")}
+function drawBackground(){const sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,"#1f65bd");sky.addColorStop(.45,"#78c9ff");sky.addColorStop(1,"#d8f8ff");ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);for(let i=0;i<55;i++){const x=((i*97-state.cameraX*.25)%(W+60))-30,y=105+((i*43)%340);pxRect(x,y,2,2,i%3?"#fff6b8":"#ff8bc1")}ctx.save();ctx.translate(-state.cameraX*.18,0);ctx.lineWidth=8;["#ff8ab5","#ffe76a","#7de879","#74c5ff"].forEach((c,i)=>{ctx.strokeStyle=c;ctx.beginPath();ctx.arc(250,430+i*8,220+i*7,Math.PI*1.03,Math.PI*1.9);ctx.stroke()});ctx.restore();for(const t of[{x:210,y:185,s:.55},{x:720,y:240,s:.5},{x:1190,y:185,s:.63}]){const x=t.x-state.cameraX*.35;ctx.save();ctx.translate(x,t.y);ctx.scale(t.s,t.s);drawCloud(0,62,1,"#f7fff4","#7da68c");pxRect(-28,12,56,50,"#f6d57b");pxRect(-38,0,76,14,"#318e7b");pxRect(-24,-12,48,15,"#47aa8c");pxRect(-7,-28,14,16,"#ffd96e");pxRect(-44,60,88,10,"#6fbf75");ctx.restore()}}
+function drawHeart(x,y,full){const c=full?"#ff6faf":"#2b2135";pxRect(x+3,y,4,4,c);pxRect(x+9,y,4,4,c);pxRect(x,y+4,16,5,c);pxRect(x+3,y+9,10,4,c);pxRect(x+6,y+13,4,3,c)}
+function drawHUD(){pxRect(0,0,W,HUD_H,"#0e1d45");pxRect(0,0,W,4,"#f6cf62");pxRect(0,HUD_H-5,W,5,"#f6cf62");pxRect(6,7,W-12,27,"#601b21");pxText("オナラ仙人と雲の秘宝",20,8,20,"#ffe76a");pxRect(9,40,54,44,"#f4c85b");pxRect(13,44,46,36,"#b9e9ff");ctx.save();ctx.translate(35,64);ctx.scale(.8,.8);pxRect(-13,-22,26,20,"#ffd7a6");pxRect(-17,-5,34,18,"#fff");pxRect(-20,-30,40,6,"#dfb654");pxRect(-11,-38,22,8,"#f2d46c");pxRect(-7,-17,4,4,"#1c294d");pxRect(5,-17,4,4,"#1c294d");ctx.restore();pxText("WORLD 5-6",72,40,14,"#fff");pxText("天上の風雲宮",72,58,15,"#fff6ad");for(let i=0;i<7;i++)drawHeart(72+i*16,77,i<state.lives);pxText("SCORE",190,40,13,"#fff");pxText(String(state.score).padStart(7,"0"),188,58,18,"#fff");pxText("BEST "+String(state.best).padStart(7,"0"),190,76,10,"#ffe76a");pxText("ふうりょく",276,40,12,"#fff");pxRect(272,60,72,14,"#342353");const seg=Math.floor(player.wind/10);for(let i=0;i<10;i++)pxRect(275+i*7,63,5,8,i<seg?(i>7?"#ff7bb7":i>4?"#ffe96e":"#7feb62"):"#23172f");if(player.wind>96)pxText("MAX!",294,74,12,"#ff7bb7")}
+function drawParticles(){for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/p.max);pxRect(p.x-state.cameraX,p.y,4,4,p.c)}ctx.globalAlpha=1}
+function drawBottomPanel(){pxRect(0,H-58,W,58,"#102659");pxRect(0,H-58,W,4,"#f6cf62");pxRect(7,H-49,108,40,"#172c64");pxRect(126,H-49,108,40,"#285f74");pxRect(245,H-49,108,40,"#24535b");pxText("アイテム",27,H-45,12,"#fff");drawFlower(28,H-21,4);pxText("×"+String(state.pots).padStart(2,"0"),42,H-27,13,"#fff");drawPot(72+state.cameraX,H-31,0);pxText("秘巻物",154,H-45,12,"#fff6ad");pxText("次の面で",154,H-29,10,"#fff");pxText("使えるぞ!",154,H-17,10,"#fff");pxText("ボーナス",272,H-45,12,"#fff");pxText("風 ×"+Math.floor(player.wind*15),272,H-27,12,"#fff")}
+function drawGame(){drawBackground();ctx.globalAlpha=.25;ctx.fillStyle="#fff1a0";for(let i=0;i<5;i++){ctx.beginPath();const sx=310+i*24-state.cameraX*.1;ctx.moveTo(sx,92);ctx.lineTo(sx+48,H);ctx.lineTo(sx+70,H);ctx.lineTo(sx+7,92);ctx.fill()}ctx.globalAlpha=1;platforms.forEach(drawPlatform);drawGoal();pots.forEach(p=>{if(!p.got)drawPot(p.x,p.y,state.time)});spirits.forEach(drawSpirit);drawParticles();drawHero();if(player.x>1180||state.won){for(let i=0;i<20;i++){const x=(i*31+state.time*1.5)%W,y=120+((i*47+state.time*2)%240);pxRect(x,y,3,6,i%2?"#ff8bc1":"#ffe76a")}}drawHUD();drawBottomPanel();if(state.messageTimer>0){state.messageTimer--;pxText("雲から落ちても、風は吹く。",W/2,120,14,"#fff6ad","center")}}
+function drawTitle(){drawBackground();ctx.fillStyle="rgba(6,11,33,.60)";ctx.fillRect(0,0,W,H);pxRect(22,116,316,178,"#14265d");pxRect(22,116,316,6,"#ffd663");pxRect(22,288,316,6,"#ffd663");pxText("オナラ仙人と",W/2,142,28,"#ffe76a","center");pxText("雲の秘宝",W/2,180,32,"#8dff77","center");pxText("風で進む、ゆるい空中冒険。",W/2,236,14,"#fff","center");pxText("TAP / SPACE で開始",W/2,260,15,"#ff8bc1","center");state.cameraX=0;player.x=130;player.y=390;drawHero();platforms.slice(0,2).forEach(drawPlatform);drawBottomPanel()}
+function drawWin(){drawGame();ctx.fillStyle="rgba(8,10,35,.55)";ctx.fillRect(0,0,W,H);pxRect(25,160,310,190,"#14265d");pxRect(25,160,310,6,"#ffd663");pxRect(25,344,310,6,"#ffd663");pxText("CLEAR!",W/2,185,36,"#ffe76a","center");pxText("雲の秘宝を発見！",W/2,232,20,"#fff","center");pxText("SCORE "+String(state.score).padStart(7,"0"),W/2,270,18,"#8dff77","center");pxText("TAP / SPACE でもう一度",W/2,310,14,"#ff8bc1","center")}
+function render(){ctx.clearRect(0,0,W,H);if(state.mode==="title")drawTitle();else if(state.mode==="win")drawWin();else drawGame()}
+function loop(){update();updateParticles();render();requestAnimationFrame(loop)}loop();
+})();
+</script>
+</body>
+</html>
